@@ -1,0 +1,45 @@
+FROM {{BASE_IMAGE}}
+
+LABEL maintainer="Percona Development <info@percona.com>"
+LABEL description="Percona {{PRODUCT}} {{VERSION}} build environment for {{OS_NAME}}"
+
+ARG FIPS_MODE=0
+ARG PRODUCT=""
+ARG VERSION=""
+
+# Set non-interactive mode
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic requirements and Ansible
+{{INSTALL_BASIC_DEPS}}
+
+# Create build user
+RUN useradd -m -s /bin/bash builder && \
+    echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder && \
+    chmod 0440 /etc/sudoers.d/builder
+
+# Copy Ansible files
+COPY ansible /home/builder/ansible
+RUN chown -R builder:builder /home/builder/ansible
+
+# Set working directory
+WORKDIR /home/builder
+
+USER builder
+
+# Run Ansible to install dependencies
+RUN cd /home/builder/ansible && \
+    ansible-playbook product-dependencies.yml -e "fipsmode=${FIPS_MODE}" -e "product=${PRODUCT}" -e "version=${VERSION}"
+
+# Set up environment for building
+ENV PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:${PATH}" \
+    GOROOT="/usr/local/go" \
+    GOPATH="/home/builder/go"
+
+# Create directory for builds
+RUN mkdir -p /home/builder/build
+
+WORKDIR /home/builder/build
+
+# Default command
+CMD ["/bin/bash"]

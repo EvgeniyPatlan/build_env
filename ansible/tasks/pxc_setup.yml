@@ -1,0 +1,28 @@
+---
+# Setup tasks for Percona XtraDB Cluster
+
+- name: Install PXC specific dependencies (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name:
+      - openssl-devel
+      - ncurses-devel
+      - libaio-devel
+      - bison
+      - socat
+      - libev-devel
+    state: present
+
+- name: Install PXC specific dependencies (Debian)
+  when: os_type == "deb"
+  apt:
+    name:
+      - libssl-dev
+      - libncurses-dev
+      - libaio-dev
+      - bison
+      - socat
+      - libev-dev
+    state: present
+
+# Add more XtraDB Cluster-specific dependencies as needed

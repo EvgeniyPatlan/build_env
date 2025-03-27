@@ -1,0 +1,47 @@
+---
+# Common setup tasks for all products
+
+# === RedHat specific tasks ===
+- name: Update yum repositories (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name: '*'
+    state: latest
+    update_cache: yes
+    
+- name: Install initial packages (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name:
+      - wget
+      - sudo
+      - perl
+      - git
+      - make
+      - cmake
+      - gcc
+      - gcc-c++
+    state: present
+
+# === Debian/Ubuntu specific tasks ===
+- name: Update apt repositories (Debian)
+  when: os_type == "deb"
+  apt:
+    update_cache: yes
+
+- name: Install initial packages (Debian)
+  when: os_type == "deb"
+  apt:
+    name:
+      - curl
+      - lsb-release
+      - wget
+      - apt-transport-https
+      - software-properties-common
+      - dirmngr
+      - git
+      - make
+      - cmake
+      - gcc
+      - g++
+    state: present

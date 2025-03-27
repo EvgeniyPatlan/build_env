@@ -1,0 +1,24 @@
+---
+# Setup tasks for Percona XtraBackup
+
+- name: Install PXB specific dependencies (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name:
+      - openssl-devel
+      - ncurses-devel
+      - libaio-devel
+      - libcurl-devel
+    state: present
+
+- name: Install PXB specific dependencies (Debian)
+  when: os_type == "deb"
+  apt:
+    name:
+      - libssl-dev
+      - libncurses-dev
+      - libaio-dev
+      - libcurl4-openssl-dev
+    state: present
+
+# Add more XtraBackup-specific dependencies as needed

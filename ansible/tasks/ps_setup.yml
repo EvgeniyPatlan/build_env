@@ -1,0 +1,28 @@
+---
+# Setup tasks for Percona Server for MySQL
+
+- name: Install PS specific dependencies (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name:
+      - openssl-devel
+      - ncurses-devel
+      - libaio-devel
+      - bison
+      - libcurl-devel
+      - libffi-devel
+    state: present
+
+- name: Install PS specific dependencies (Debian)
+  when: os_type == "deb"
+  apt:
+    name:
+      - libssl-dev
+      - libncurses-dev
+      - libaio-dev
+      - bison
+      - libcurl4-openssl-dev
+      - libffi-dev
+    state: present
+
+# Add more MySQL-specific dependencies as needed

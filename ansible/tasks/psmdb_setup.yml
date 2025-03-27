@@ -1,0 +1,128 @@
+---
+# Setup tasks for Percona Server for MongoDB
+
+- name: Install MongoDB specific dependencies (RedHat)
+  when: os_type == "rpm"
+  yum:
+    name:
+      - libpcap-devel
+      - openssl-devel
+      - cyrus-sasl-devel
+      - snappy-devel
+      - zlib-devel
+      - bzip2-devel
+      - libcurl-devel
+      - e2fsprogs-devel
+      - expat-devel
+      - lz4-devel
+      - openldap-devel
+      - krb5-devel
+      - xz-devel
+    state: present
+
+- name: Install MongoDB specific dependencies (Debian)
+  when: os_type == "deb"
+  apt:
+    name:
+      - libpcap-dev
+      - libssl-dev
+      - libsasl2-dev
+      - libsnappy-dev
+      - zlib1g-dev
+      - libbz2-dev
+      - libcurl4-openssl-dev
+      - libldap2-dev
+      - libkrb5-dev
+      - liblzma-dev
+      - libexpat1-dev
+    state: present
+
+# Install MongoDB Toolchain
+- name: Download MongoDB Toolchain installer
+  get_url:
+    url: https://downloads.percona.com/downloads/TESTING/issue-CUSTO83/toolchain_installer.tar.gz
+    dest: /tmp/toolchain_installer.tar.gz
+    
+- name: Extract toolchain installer
+  unarchive:
+    src: /tmp/toolchain_installer.tar.gz
+    dest: /tmp
+    remote_src: yes
+    
+- name: Install MongoDB Toolchain
+  shell: |
+    cd /tmp
+    export USER={{ custom_user }}
+    bash -x ./installer.sh -k --download-url {{ mongodb_toolchain_url }}/{{ os_name }}_mongodbtoolchain_{{ arch }}.tar.gz
+  args:
+    creates: /opt/mongodbtoolchain/v4/bin/gcc
+
+# Install Go for MongoDB tools
+- name: Set Go architecture variable
+  set_fact:
+    go_arch: "{{ 'amd64' if arch == 'x86_64' else 'arm64' if arch == 'aarch64' else 'amd64' }}"
+    
+- name: Download Go {{ go_version }}
+  get_url:
+    url: "https://golang.org/dl/go{{ go_version }}.linux-{{ go_arch }}.tar.gz"
+    dest: "/tmp/golang{{ go_version }}.tar.gz"
+    
+- name: Remove existing Go installations
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - /usr/local/go1.22
+    - /usr/local/go1.19
+    - /usr/local/go1.11
+    - /usr/local/go1.8
+    - /usr/local/go1.9
+    - /usr/local/go1.9.2
+    - /usr/local/go
+    
+- name: Extract Go
+  shell: tar --transform=s,go,go1.22, -zxf /tmp/golang{{ go_version }}.tar.gz -C /usr/local
+  args:
+    creates: /usr/local/go1.22
+    
+- name: Create Go symlink
+  file:
+    src: /usr/local/go1.22
+    dest: /usr/local/go
+    state: link
+
+# AWS SDK Build for MongoDB
+- name: Clone AWS SDK
+  git:
+    repo: https://github.com/aws/aws-sdk-cpp.git
+    dest: /tmp/aws-sdk-cpp
+    version: 1.9.379
+    
+- name: Initialize AWS SDK submodules
+  command: git submodule update --init --recursive
+  args:
+    chdir: /tmp/aws-sdk-cpp
+    
+- name: Patch AWS SDK for RHEL
+  when: os_type == "rpm" and rhel_version in ["7", "8", "9"]
+  shell: |
+    sed -i 's:v0.4.42:v0.6.10:' third-party/CMakeLists.txt
+    sed -i 's:"-Werror" ::' cmake/compiler_settings.cmake
+  args:
+    chdir: /tmp/aws-sdk-cpp
+    
+- name: Create AWS SDK build directory
+  file:
+    path: /tmp/aws-sdk-cpp/build
+    state: directory
+    
+- name: Build AWS SDK
+  shell: |
+    export CC=/opt/mongodbtoolchain/v4/bin/gcc
+    export CXX=/opt/mongodbtoolchain/v4/bin/g++
+    cd /tmp/aws-sdk-cpp/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;transfer" -DBUILD_SHARED_LIBS=OFF -DMINIMIZE_SIZE=ON
+    make -j$(nproc)
+    make install
+  args:
+    creates: /usr/local/lib/libaws-cpp-sdk-s3.a
