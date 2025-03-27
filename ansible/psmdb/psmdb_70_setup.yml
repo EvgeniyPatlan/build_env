@@ -1,0 +1,143 @@
+---
+# Ansible playbook to install dependencies for Percona Server MongoDB 7.0
+
+- name: Install Percona Server MongoDB 7.0 Build Dependencies
+  hosts: "{{ target_host | default('localhost') }}"
+  become: yes
+  vars:
+    go_version: "1.22.4"
+    mongodb_toolchain_url: "https://downloads.percona.com/downloads/TESTING/issue-CUSTO83"
+    fipsmode: "{{ fipsmode | default('0') }}"
+    custom_user: "{{ lookup('env', 'USER') | default('root') }}"
+
+  tasks:
+    - name: Gather OS facts
+      setup:
+        gather_subset: 
+          - '!all'
+          - '!min'
+          - 'distribution'
+          - 'hardware'
+          
+    - name: Set Debian/Ubuntu variables
+      when: ansible_os_family == "Debian"
+      set_fact:
+        os_type: "deb"
+        os_name: "{{ ansible_distribution_release }}"
+        arch: "{{ ansible_architecture }}"
+        
+    - name: Set RedHat/CentOS variables
+      when: ansible_os_family == "RedHat"
+      set_fact:
+        os_type: "rpm"
+        os_name: "el{{ ansible_distribution_major_version }}"
+        rhel_version: "{{ ansible_distribution_major_version }}"
+        arch: "{{ 'i386' if ansible_architecture == 'i686' else ansible_architecture }}"
+
+    # Display configuration information
+    - name: Display build configuration
+      debug:
+        msg: "Building environment for PSMDB-70 on {{ os_type }} {{ os_name }} ({{ arch }})"
+
+    # Include common tasks
+    - name: Include common setup tasks
+      include_tasks: ../common/common_setup.yml
+
+    # === RedHat specific tasks ===
+    - name: Install RHEL dependencies
+      when: os_type == "rpm"
+      block:
+        # Add PSMDB 7.0 specific dependencies for RedHat
+        - name: Install common MongoDB packages
+          yum:
+            name:
+              - libpcap-devel
+              - openssl-devel
+              - cyrus-sasl-devel
+              - cyrus-sasl-plain
+              - snappy-devel
+              - zlib-devel
+              - bzip2-devel
+              - scons
+              - libcurl-devel
+              - e2fsprogs-devel
+              - expat-devel
+              - lz4-devel
+              - openldap-devel
+              - krb5-devel
+              - xz-devel
+              - which
+            state: present
+
+        # Include other RHEL version specific tasks here
+
+    # === Debian specific tasks ===
+    - name: Install Debian dependencies
+      when: os_type == "deb"
+      block:
+        # Add PSMDB 7.0 specific dependencies for Debian
+        - name: Install common MongoDB packages for Debian
+          apt:
+            name:
+              - libpcap-dev
+              - libssl-dev
+              - libsasl2-dev
+              - libsnappy-dev
+              - zlib1g-dev
+              - libbz2-dev
+              - scons
+              - libcurl4-openssl-dev
+              - libldap2-dev
+              - libkrb5-dev
+              - liblzma-dev
+              - libexpat1-dev
+              - patchelf
+            state: present
+
+        # Include other Debian version specific tasks here
+
+    # === Common tasks for all OS types ===
+    - name: Download curl source
+      get_url:
+        url: https://curl.se/download/curl-7.77.0.tar.gz
+        dest: /tmp/curl-7.77.0.tar.gz
+
+    - name: Extract curl source
+      unarchive:
+        src: /tmp/curl-7.77.0.tar.gz
+        dest: /tmp
+        remote_src: yes
+        
+    - name: Build and install curl from source
+      shell: |
+        cd /tmp/curl-7.77.0
+        ./configure --with-openssl
+        make -j$(nproc)
+        make install
+      args:
+        creates: /usr/local/bin/curl
+
+    # === Install Go for all versions ===
+    - name: Install Go
+      include_tasks: ../common/install_golang.yml
+      vars:
+        golang_version: "{{ go_version }}"
+        
+    # === MongoDB Toolchain installation ===
+    - name: Install MongoDB Toolchain
+      include_tasks: ../common/install_mongodb_toolchain.yml
+      
+    # === AWS SDK Build ===
+    - name: Build and install AWS SDK
+      include_tasks: ../common/build_aws_sdk.yml
+      
+    # === Set environment variables ===
+    - name: Set MongoDB environment variables
+      lineinfile:
+        path: /home/{{ custom_user }}/.bashrc
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'export PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:$PATH"'
+        - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
+        - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 -B/opt/mongodbtoolchain/v4/bin"'
