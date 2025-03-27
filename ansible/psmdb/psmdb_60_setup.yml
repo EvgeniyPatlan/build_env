@@ -1,0 +1,542 @@
+---
+# Ansible playbook to install dependencies for Percona Server MongoDB 6.0
+
+- name: Install Percona Server MongoDB 6.0 Build Dependencies
+  hosts: "{{ target_host | default('localhost') }}"
+  become: yes
+  vars:
+    go_version: "1.22.8"
+    mongodb_toolchain_url: "https://downloads.percona.com/downloads/TESTING/issue-CUSTO83"
+    fipsmode: "{{ fipsmode | default('0') }}"
+    custom_user: "{{ lookup('env', 'USER') | default('root') }}"
+
+  tasks:
+    - name: Gather OS facts
+      setup:
+        gather_subset: 
+          - '!all'
+          - '!min'
+          - 'distribution'
+          - 'hardware'
+          
+    - name: Set Debian/Ubuntu variables
+      when: ansible_os_family == "Debian"
+      set_fact:
+        os_type: "deb"
+        os_name: "{{ ansible_distribution_release }}"
+        arch: "{{ ansible_architecture }}"
+        
+    - name: Set RedHat/CentOS variables
+      when: ansible_os_family == "RedHat"
+      set_fact:
+        os_type: "rpm"
+        os_name: "el{{ ansible_distribution_major_version }}"
+        rhel_version: "{{ ansible_distribution_major_version }}"
+        arch: "{{ 'i386' if ansible_architecture == 'i686' else ansible_architecture }}"
+
+    # Display configuration information
+    - name: Display build configuration
+      debug:
+        msg: "Building environment for PSMDB-60 on {{ os_type }} {{ os_name }} ({{ arch }})"
+
+    # Include common tasks
+    - name: Include common setup tasks
+      include_tasks: ../common/common_setup.yml
+
+    # === RedHat specific tasks ===
+    - name: Install RHEL dependencies
+      when: os_type == "rpm"
+      block:
+        - name: Install common packages
+          yum:
+            name:
+              - libpcap-devel
+              - openssl-devel
+              - cyrus-sasl-devel
+              - cyrus-sasl-plain
+              - snappy-devel
+              - zlib-devel
+              - bzip2-devel
+              - libcurl-devel
+              - e2fsprogs-devel
+              - expat-devel
+              - lz4-devel
+              - which
+              - openldap-devel
+              - krb5-devel
+              - xz-devel
+            state: present
+
+        # RHEL 7 specific tasks for PSMDB 6.0
+        - name: RHEL 7 tasks for PSMDB 6.0
+          when: rhel_version == "7"
+          block:
+            - name: Fix CentOS 7 mirrors
+              shell: |
+                sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+                sed -i 's|#\s*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+              ignore_errors: yes
+              
+            - name: Install EPEL repository
+              yum:
+                name: epel-release
+                state: present
+
+            - name: Install SCL repository
+              yum:
+                name: centos-release-scl
+                state: present
+
+            - name: Enable SCL testing repository
+              command: yum-config-manager --enable centos-sclo-rh-testing
+              ignore_errors: yes
+
+            - name: Install additional packages
+              yum:
+                name:
+                  - rh-python38-python
+                  - rh-python38-python-devel
+                  - rh-python38-python-pip
+                  - devtoolset-9
+                  - devtoolset-11-elfutils
+                  - devtoolset-11-dwz
+                state: present
+
+            - name: Configure environment in bashrc
+              lineinfile:
+                path: /home/{{ custom_user }}/.bashrc
+                line: "{{ item }}"
+                create: yes
+              with_items:
+                - "source /opt/rh/devtoolset-9/enable"
+                - "source /opt/rh/rh-python38/enable"
+                - "source /opt/rh/devtoolset-11/enable"
+
+            - name: Install Python packages
+              shell: |
+                source /opt/rh/rh-python38/enable
+                pip install --upgrade pip
+                pip install --user setuptools --upgrade
+                pip3.8 install --user typing pyyaml regex Cheetah3
+                pip2.7 install --user typing pyyaml regex Cheetah Cheetah3
+              args:
+                executable: /bin/bash
+              become: yes
+              become_user: "{{ custom_user }}"
+
+        # RHEL 8 specific tasks for PSMDB 6.0
+        - name: RHEL 8 tasks for PSMDB 6.0
+          when: rhel_version == "8"
+          block:
+            - name: Enable CodeReady Builder repository
+              command: yum-config-manager --enable ol8_codeready_builder
+              ignore_errors: yes
+              
+            - name: Install EPEL repository
+              yum:
+                name: epel-release
+                state: present
+                
+            - name: Install additional packages
+              yum:
+                name:
+                  - python38
+                  - python38-devel
+                  - python38-pip
+                  - gcc-toolset-9
+                  - gcc-toolset-11-dwz
+                  - gcc-toolset-11-elfutils
+                  - gcc-c++
+                state: present
+                
+            - name: Create scons symlink
+              file:
+                src: /usr/bin/scons-3
+                dest: /usr/bin/scons
+                state: link
+                force: yes
+                
+            - name: Install Python packages
+              shell: |
+                /usr/bin/pip3.8 install --user typing pyyaml regex Cheetah3
+              args:
+                executable: /bin/bash
+              become: yes
+              become_user: "{{ custom_user }}"
+
+        # RHEL 9 specific tasks for PSMDB 6.0
+        - name: RHEL 9/2023 tasks for PSMDB 6.0
+          when: rhel_version == "9" or rhel_version == "2023"
+          block:
+            - name: Enable CodeReady Builder repository
+              shell: |
+                {% if rhel_version == "9" %}
+                dnf config-manager --enable ol9_codeready_builder
+                {% else %}
+                dnf config-manager --enable ol9_codeready_builder
+                {% endif %}
+              ignore_errors: yes
+
+            - name: Install EPEL repository
+              yum:
+                name: "{% if rhel_version == '9' %}oracle-epel-release-el9{% else %}epel-release{% endif %}"
+                state: present
+
+            - name: Install Python packages
+              yum:
+                name:
+                  - python3
+                  - python3-pip
+                  - python3-devel
+                state: present
+
+            - name: Install Python packages for PSMDB 6.0 on RHEL 9
+              shell: |
+                /usr/bin/pip install --upgrade pip setuptools --ignore-installed
+                /usr/bin/pip install --user typing pyyaml==5.3.1 regex Cheetah3
+              args:
+                executable: /bin/bash
+              become: yes
+              become_user: "{{ custom_user }}"
+                
+            - name: Install scons on RHEL 2023
+              when: rhel_version == "2023"
+              shell: |
+                /usr/bin/pip install scons --root-user-action=ignore
+                ln -sf /usr/local/bin/scons /usr/bin/scons
+              args:
+                executable: /bin/bash
+              ignore_errors: yes
+
+    # === Debian specific tasks ===
+    - name: Install Debian/Ubuntu dependencies
+      when: os_type == "deb"
+      block:
+        - name: Install common packages
+          apt:
+            name:
+              - valgrind
+              - scons
+              - liblz4-dev
+              - devscripts
+              - debhelper
+              - debconf
+              - libpcap-dev
+              - libbz2-dev
+              - libsnappy-dev
+              - pkg-config
+              - zlib1g-dev
+              - libzlcore-dev
+              - libsasl2-dev
+              - libssl-dev
+              - libcurl4-openssl-dev
+              - libldap2-dev
+              - libkrb5-dev
+              - liblzma-dev
+              - patchelf
+              - libexpat1-dev
+            state: present
+
+        - name: Add Python PPA repository for older Ubuntu versions
+          when: os_name == "bionic" or os_name == "focal"
+          apt_repository:
+            repo: ppa:deadsnakes/ppa
+            state: present
+            
+        - name: Add Python repository for Debian Buster
+          when: os_name == "buster"
+          block:
+            - name: Download Python repository key
+              get_url:
+                url: https://people.debian.org/~paravoid/python-all/unofficial-python-all.asc
+                dest: /etc/apt/trusted.gpg.d/unofficial-python-all.asc
+                
+            - name: Add Python repository
+              lineinfile:
+                path: /etc/apt/sources.list.d/python-all.list
+                line: "deb http://people.debian.org/~paravoid/python-all {{ os_name }} main"
+                create: yes
+                
+            - name: Update apt cache
+              apt:
+                update_cache: yes
+        
+        - name: Install Python packages based on Debian version
+          apt:
+            name: "{{ python_packages }}"
+            state: present
+          vars:
+            python_packages: >-
+              {% if os_name == 'bullseye' or os_name == 'jammy' %}
+              python3 python3-dev python3-pip
+              {% elif os_name == 'noble' %}
+              python3.11 python3.11-dev
+              {% else %}
+              python3.7 python3.7-dev dh-systemd python3.7-distutils
+              {% endif %}
+
+        - name: Create Python symlinks for older Debian/Ubuntu versions
+          when: os_name != "bullseye" and os_name != "jammy" and os_name != "noble"
+          block:
+            - name: Link Python 3.7 as default Python3
+              file:
+                src: /usr/bin/python3.7
+                dest: /usr/bin/python3
+                state: link
+                force: yes
+                
+            - name: Set Python 3.7 as alternative
+              alternatives:
+                name: python
+                path: /usr/bin/python3.7
+                link: /usr/bin/python
+                priority: 1
+
+        - name: Create Python symlinks for newer Debian/Ubuntu versions
+          when: os_name == "bullseye" or os_name == "jammy" or os_name == "noble"
+          block:
+            - name: Link Python for Bullseye
+              when: os_name == "bullseye"
+              alternatives:
+                name: python
+                path: /usr/bin/python3.9
+                link: /usr/bin/python
+                priority: 1
+                
+            - name: Link Python for Jammy
+              when: os_name == "jammy"
+              alternatives:
+                name: python
+                path: /usr/bin/python3.10
+                link: /usr/bin/python
+                priority: 1
+                
+            - name: Link Python for Noble
+              when: os_name == "noble"
+              block:
+                - name: Set Python 3.11 alternative
+                  alternatives:
+                    name: python
+                    path: /usr/bin/python3.11
+                    link: /usr/bin/python
+                    priority: 1
+                    
+                - name: Link Python3 to Python 3.11
+                  file:
+                    src: /usr/bin/python3.11
+                    dest: /usr/bin/python3
+                    state: link
+                    force: yes
+
+        - name: Install Pip for Python
+          get_url:
+            url: "{{ pip_url }}"
+            dest: /tmp/get-pip.py
+          vars:
+            pip_url: >-
+              {% if os_name == 'bullseye' or os_name == 'jammy' or os_name == 'noble' %}
+              https://bootstrap.pypa.io/get-pip.py
+              {% else %}
+              https://bootstrap.pypa.io/pip/3.7/get-pip.py
+              {% endif %}
+              
+        - name: Install Pip
+          command: python /tmp/get-pip.py
+          
+        - name: Install setuptools with Pip
+          pip:
+            name: setuptools
+            state: present
+
+    # === Common tasks for all OS types ===
+    - name: Download curl source
+      get_url:
+        url: https://curl.se/download/curl-7.77.0.tar.gz
+        dest: /tmp/curl-7.77.0.tar.gz
+
+    - name: Extract curl source
+      unarchive:
+        src: /tmp/curl-7.77.0.tar.gz
+        dest: /tmp
+        remote_src: yes
+        
+    - name: Build and install curl from source
+      shell: |
+        cd /tmp/curl-7.77.0
+        ./configure --with-openssl
+        make -j$(nproc)
+        make install
+      args:
+        creates: /usr/local/bin/curl
+
+    # === Install Go for all versions ===
+    - name: Install Go
+      include_tasks: ../common/install_golang.yml
+      vars:
+        golang_version: "{{ go_version }}"
+        
+    # === MongoDB Toolchain installation ===
+    - name: Install MongoDB Toolchain
+      include_tasks: ../common/install_mongodb_toolchain.yml
+      
+    # === AWS SDK Build ===
+    - name: Build and install AWS SDK
+      include_tasks: ../common/build_aws_sdk.yml
+      
+    # === Set environment variables ===
+    - name: Set MongoDB environment variables
+      lineinfile:
+        path: /home/{{ custom_user }}/.bashrc
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'export PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:$PATH"'
+        - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
+        - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 -B/opt/mongodbtoolchain/v4/bin"'
+EOF
+
+# Create PSMDB 7.0 playbook
+cat > ansible/psmdb/psmdb_70_setup.yml << 'EOF'
+---
+# Ansible playbook to install dependencies for Percona Server MongoDB 7.0
+
+- name: Install Percona Server MongoDB 7.0 Build Dependencies
+  hosts: "{{ target_host | default('localhost') }}"
+  become: yes
+  vars:
+    go_version: "1.22.4"
+    mongodb_toolchain_url: "https://downloads.percona.com/downloads/TESTING/issue-CUSTO83"
+    fipsmode: "{{ fipsmode | default('0') }}"
+    custom_user: "{{ lookup('env', 'USER') | default('root') }}"
+
+  tasks:
+    - name: Gather OS facts
+      setup:
+        gather_subset: 
+          - '!all'
+          - '!min'
+          - 'distribution'
+          - 'hardware'
+          
+    - name: Set Debian/Ubuntu variables
+      when: ansible_os_family == "Debian"
+      set_fact:
+        os_type: "deb"
+        os_name: "{{ ansible_distribution_release }}"
+        arch: "{{ ansible_architecture }}"
+        
+    - name: Set RedHat/CentOS variables
+      when: ansible_os_family == "RedHat"
+      set_fact:
+        os_type: "rpm"
+        os_name: "el{{ ansible_distribution_major_version }}"
+        rhel_version: "{{ ansible_distribution_major_version }}"
+        arch: "{{ 'i386' if ansible_architecture == 'i686' else ansible_architecture }}"
+
+    # Display configuration information
+    - name: Display build configuration
+      debug:
+        msg: "Building environment for PSMDB-70 on {{ os_type }} {{ os_name }} ({{ arch }})"
+
+    # Include common tasks
+    - name: Include common setup tasks
+      include_tasks: ../common/common_setup.yml
+
+    # === RedHat specific tasks ===
+    - name: Install RHEL dependencies
+      when: os_type == "rpm"
+      block:
+        # Add PSMDB 7.0 specific dependencies for RedHat
+        - name: Install common MongoDB packages
+          yum:
+            name:
+              - libpcap-devel
+              - openssl-devel
+              - cyrus-sasl-devel
+              - cyrus-sasl-plain
+              - snappy-devel
+              - zlib-devel
+              - bzip2-devel
+              - scons
+              - libcurl-devel
+              - e2fsprogs-devel
+              - expat-devel
+              - lz4-devel
+              - openldap-devel
+              - krb5-devel
+              - xz-devel
+              - which
+            state: present
+
+        # Include other RHEL version specific tasks here
+
+    # === Debian specific tasks ===
+    - name: Install Debian dependencies
+      when: os_type == "deb"
+      block:
+        # Add PSMDB 7.0 specific dependencies for Debian
+        - name: Install common MongoDB packages for Debian
+          apt:
+            name:
+              - libpcap-dev
+              - libssl-dev
+              - libsasl2-dev
+              - libsnappy-dev
+              - zlib1g-dev
+              - libbz2-dev
+              - scons
+              - libcurl4-openssl-dev
+              - libldap2-dev
+              - libkrb5-dev
+              - liblzma-dev
+              - libexpat1-dev
+              - patchelf
+            state: present
+
+        # Include other Debian version specific tasks here
+
+    # === Common tasks for all OS types ===
+    - name: Download curl source
+      get_url:
+        url: https://curl.se/download/curl-7.77.0.tar.gz
+        dest: /tmp/curl-7.77.0.tar.gz
+
+    - name: Extract curl source
+      unarchive:
+        src: /tmp/curl-7.77.0.tar.gz
+        dest: /tmp
+        remote_src: yes
+        
+    - name: Build and install curl from source
+      shell: |
+        cd /tmp/curl-7.77.0
+        ./configure --with-openssl
+        make -j$(nproc)
+        make install
+      args:
+        creates: /usr/local/bin/curl
+
+    # === Install Go for all versions ===
+    - name: Install Go
+      include_tasks: ../common/install_golang.yml
+      vars:
+        golang_version: "{{ go_version }}"
+        
+    # === MongoDB Toolchain installation ===
+    - name: Install MongoDB Toolchain
+      include_tasks: ../common/install_mongodb_toolchain.yml
+      
+    # === AWS SDK Build ===
+    - name: Build and install AWS SDK
+      include_tasks: ../common/build_aws_sdk.yml
+      
+    # === Set environment variables ===
+    - name: Set MongoDB environment variables
+      lineinfile:
+        path: /home/{{ custom_user }}/.bashrc
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - 'export PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:$PATH"'
+        - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
+        - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 -B/opt/mongodbtoolchain/v4/bin"'

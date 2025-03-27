@@ -1,3 +1,4 @@
+# Create Dockerfile template
 FROM {{BASE_IMAGE}}
 
 LABEL maintainer="Percona Development <info@percona.com>"
@@ -29,7 +30,10 @@ USER builder
 
 # Run Ansible to install dependencies
 RUN cd /home/builder/ansible && \
-    ansible-playbook product-dependencies.yml -e "fipsmode=${FIPS_MODE}" -e "product=${PRODUCT}" -e "version=${VERSION}"
+    ansible-playbook -i config/hosts
+# Run Ansible to install dependencies
+RUN cd /home/builder/ansible && \
+    ansible-playbook -i config/hosts {{PRODUCT_LC}}/{{PRODUCT_LC}}_{{VERSION}}_setup.yml -e "fipsmode=${FIPS_MODE}"
 
 # Set up environment for building
 ENV PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:${PATH}" \

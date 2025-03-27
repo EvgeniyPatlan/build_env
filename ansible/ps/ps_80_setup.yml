@@ -1,0 +1,69 @@
+---
+# Ansible playbook to install dependencies for Percona Server for MySQL 8.0
+
+- name: Install Percona Server for MySQL 8.0 Build Dependencies
+  hosts: "{{ target_host | default('localhost') }}"
+  become: yes
+  vars:
+    fipsmode: "{{ fipsmode | default('0') }}"
+    custom_user: "{{ lookup('env', 'USER') | default('root') }}"
+
+  tasks:
+    - name: Gather OS facts
+      setup:
+        gather_subset: 
+          - '!all'
+          - '!min'
+          - 'distribution'
+          - 'hardware'
+          
+    - name: Set Debian/Ubuntu variables
+      when: ansible_os_family == "Debian"
+      set_fact:
+        os_type: "deb"
+        os_name: "{{ ansible_distribution_release }}"
+        arch: "{{ ansible_architecture }}"
+        
+    - name: Set RedHat/CentOS variables
+      when: ansible_os_family == "RedHat"
+      set_fact:
+        os_type: "rpm"
+        os_name: "el{{ ansible_distribution_major_version }}"
+        rhel_version: "{{ ansible_distribution_major_version }}"
+        arch: "{{ 'i386' if ansible_architecture == 'i686' else ansible_architecture }}"
+
+    # Display configuration information
+    - name: Display build configuration
+      debug:
+        msg: "Building environment for PS-80 on {{ os_type }} {{ os_name }} ({{ arch }})"
+
+    # Include common tasks
+    - name: Include common setup tasks
+      include_tasks: ../common/common_setup.yml
+
+    # === MySQL-specific dependencies ===
+    - name: Install MySQL dependencies (RedHat)
+      when: os_type == "rpm"
+      yum:
+        name:
+          - openssl-devel
+          - ncurses-devel
+          - libaio-devel
+          - bison
+          - libcurl-devel
+          - libffi-devel
+        state: present
+
+    - name: Install MySQL dependencies (Debian)
+      when: os_type == "deb"
+      apt:
+        name:
+          - libssl-dev
+          - libncurses-dev
+          - libaio-dev
+          - bison
+          - libcurl4-openssl-dev
+          - libffi-dev
+        state: present
+
+    # Add more MySQL-specific tasks as needed

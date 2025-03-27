@@ -140,9 +140,9 @@ INSTALL_BASIC_DEPS=(
 declare -A SUPPORTED_PRODUCTS
 SUPPORTED_PRODUCTS=(
     ["PSMDB"]="60 70 80"
-    ["PS"]="80 84 9.X"
+    ["PS"]="80 84 9X"
     ["PXB"]="80 84 90"
-    ["PXC"]="80 84 9.X"
+    ["PXC"]="80 84 9X"
 )
 
 function usage() {
@@ -181,7 +181,7 @@ function usage() {
     echo "Examples:"
     echo "  $0 --product PSMDB --version 60 --push ol8 ubuntu2204"
     echo "  $0 --product PS --version 80 --fips --push"
-    echo "  $0 --product PXC --version 9.X --arch linux/amd64 --load ol9"
+    echo "  $0 --product PXC --version 9X --arch linux/amd64 --load ol9"
     exit 1
 }
 
@@ -261,6 +261,9 @@ if [[ ! " ${SUPPORTED_PRODUCTS[$PRODUCT]} " =~ " $VERSION " ]]; then
     usage
 fi
 
+# Convert product to lowercase for playbook paths
+PRODUCT_LC=$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]')
+
 # If no platforms specified, build all
 if [ "$BUILD_ALL_PLATFORMS" -eq 1 ]; then
     PLATFORMS=("ol8" "ol9" "ubuntu2004" "ubuntu2204" "ubuntu2404" "debian11" "debian12")
@@ -298,6 +301,14 @@ if [ ! -f "$TEMPLATE_FILE" ]; then
     exit 1
 fi
 
+# Check if playbook exists
+PLAYBOOK_PATH="$SCRIPT_DIR/ansible/$PRODUCT_LC/${PRODUCT_LC}_${VERSION}_setup.yml"
+if [ ! -f "$PLAYBOOK_PATH" ]; then
+    echo "Error: Playbook file $PLAYBOOK_PATH not found!"
+    echo "Please create the playbook for $PRODUCT_LC version $VERSION first."
+    exit 1
+fi
+
 # Create a build directory
 BUILD_DIR="$SCRIPT_DIR/docker-build"
 mkdir -p "$BUILD_DIR"
@@ -308,10 +319,13 @@ BUILDER_NAME="percona-multiarch-builder"
 # Check if the builder already exists
 if ! docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
     echo "Creating new buildx builder: $BUILDER_NAME"
-    docker buildx create --name "$BUILDER_NAME" --driver "$BUILDX_DRIVER" --use
+    docker buildx create --driver "$BUILDX_DRIVER" --name "$BUILDER_NAME" --use || {
+        echo "Fallback: creating default builder"
+        docker buildx create --driver "$BUILDX_DRIVER" --use
+    }
 else
     echo "Using existing buildx builder: $BUILDER_NAME"
-    docker buildx use "$BUILDER_NAME"
+    docker buildx use "$BUILDER_NAME" || true
 fi
 
 # Ensure the builder is running
@@ -351,10 +365,9 @@ for platform in "${PLATFORMS[@]}"; do
     sed -i "s|{{BASE_IMAGE}}|${BASE_IMAGES[$platform]}|g" "$platform_dockerfile"
     sed -i "s|{{OS_NAME}}|${OS_NAMES[$platform]}|g" "$platform_dockerfile"
     sed -i "s|{{INSTALL_BASIC_DEPS}}|${INSTALL_BASIC_DEPS[$platform]}|g" "$platform_dockerfile"
-    
-    # Add product and version as build args
-    sed -i "/ARG FIPS_MODE=0/a ARG PRODUCT=\"$PRODUCT\"\nARG VERSION=\"$VERSION\"" "$platform_dockerfile"
-    sed -i "/description=/a LABEL product=\"$PRODUCT\" version=\"$VERSION\"" "$platform_dockerfile"
+    sed -i "s|{{PRODUCT}}|${PRODUCT}|g" "$platform_dockerfile"
+    sed -i "s|{{VERSION}}|${VERSION}|g" "$platform_dockerfile"
+    sed -i "s|{{PRODUCT_LC}}|${PRODUCT_LC}|g" "$platform_dockerfile"
     
     # Build command options
     build_args=()
@@ -421,11 +434,130 @@ if [ "$KEEP_DOCKERFILE" -eq 0 ]; then
 fi
 
 # If we logged in within this script, log out for security
-if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ];
-# If we logged in within this script, log out for security
 if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
     echo "Logging out from Docker Hub..."
     docker logout
 fi
 
 echo "All Docker images for $PRODUCT-$VERSION built successfully!"
+EOF
+
+# Create run-local-setup.sh script
+cat > run-local-setup.sh << 'EOF'
+#!/usr/bin/env bash
+
+# Script to run Ansible locally to set up Percona product build dependencies
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Default values
+FIPS_MODE=0
+VERBOSITY=""
+PRODUCT=""
+VERSION=""
+
+# Check if Ansible is installed
+if ! command -v ansible-playbook &> /dev/null; then
+    echo "Ansible is not installed. Installing..."
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y ansible
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y epel-release
+        sudo yum install -y ansible
+    elif command -v dnf &> /dev/null; then
+        sudo dnf install -y ansible
+    else
+        echo "Could not install Ansible. Please install it manually."
+        exit 1
+    fi
+fi
+
+function usage() {
+    echo "Usage: $0 --product PRODUCT --version VERSION [OPTIONS]"
+    echo "Set up local environment for building Percona products"
+    echo ""
+    echo "Required options:"
+    echo "  --product PRODUCT     Product to set up (PSMDB, PS, PXB, PXC)"
+    echo "  --version VERSION     Product version (e.g., 60, 70, 80, 84, 9X)"
+    echo ""
+    echo "Other options:"
+    echo "  --fips                Enable FIPS mode"
+    echo "  -v, --verbose         Increase verbosity level"
+    echo "  -h, --help            Show this help message"
+    echo ""
+    echo "Supported product versions:"
+    echo "  PSMDB: 60, 70, 80"
+    echo "  PS: 80, 84, 9X"
+    echo "  PXB: 80, 84, 90"
+    echo "  PXC: 80, 84, 9X"
+    echo ""
+    echo "Example: $0 --product PSMDB --version 70"
+    exit 1
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --product)
+            PRODUCT="$2"
+            shift 2
+            ;;
+        --version)
+            VERSION="$2"
+            shift 2
+            ;;
+        --fips)
+            FIPS_MODE=1
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSITY="-v"
+            shift
+            ;;
+        -vv)
+            VERBOSITY="-vv"
+            shift
+            ;;
+        -vvv)
+            VERBOSITY="-vvv"
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [ -z "$PRODUCT" ] || [ -z "$VERSION" ]; then
+    echo "Error: Product and version must be specified."
+    usage
+fi
+
+# Convert product to lowercase for directory matching
+PRODUCT_LC=$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]')
+
+# Find the appropriate playbook
+PLAYBOOK="$SCRIPT_DIR/ansible/$PRODUCT_LC/${PRODUCT_LC}_${VERSION}_setup.yml"
+
+if [ ! -f "$PLAYBOOK" ]; then
+    echo "Error: No playbook found for $PRODUCT version $VERSION"
+    echo "Expected playbook path: $PLAYBOOK"
+    exit 1
+fi
+
+echo "Setting up build environment for $PRODUCT-$VERSION"
+echo "FIPS mode: $FIPS_MODE"
+echo "Using playbook: $PLAYBOOK"
+
+# Run the Ansible playbook
+ansible-playbook -i "$SCRIPT_DIR/ansible/config/hosts" "$PLAYBOOK" -e "fipsmode=$FIPS_MODE" $VERBOSITY
+
+echo "Setup completed successfully!"
