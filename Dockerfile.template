@@ -15,9 +15,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 {{INSTALL_BASIC_DEPS}}
 
 # Create build user
-RUN useradd -m -s /bin/bash builder && \
-    echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder && \
-    chmod 0440 /etc/sudoers.d/builder
+RUN useradd -m -s /bin/bash builder 
+#RUN useradd -m -s /bin/bash builder && \
+#    echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder && \
+#    chmod 0440 /etc/sudoers.d/builder
 
 # Copy Ansible files
 COPY ansible /home/builder/ansible
@@ -26,14 +27,39 @@ RUN chown -R builder:builder /home/builder/ansible
 # Set working directory
 WORKDIR /home/builder
 
-USER builder
+USER root
+
+RUN echo "root ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/root && \
+    chmod 440 /etc/sudoers.d/root
+
+RUN echo "Defaults !pam_session" >> /etc/sudoers && \
+    echo "Defaults !env_reset" >> /etc/sudoers
+
+
+# Create a script to modify Ansible's behavior
+RUN echo '#!/bin/bash' > /fix_ansible.sh && \
+    echo 'ANSIBLE_PATH=$(python3 -c "import ansible; print(ansible.__path__[0])")' >> /fix_ansible.sh && \
+    echo 'MODULE_PATH="$ANSIBLE_PATH/modules/commands/command.py"' >> /fix_ansible.sh && \
+    echo 'if [ -f "$MODULE_PATH" ]; then' >> /fix_ansible.sh && \
+    echo '  sed -i "s/become=True/become=False/g" "$MODULE_PATH"' >> /fix_ansible.sh && \
+    echo '  echo "Modified $MODULE_PATH to disable privilege escalation"' >> /fix_ansible.sh && \
+    echo 'else' >> /fix_ansible.sh && \
+    echo '  echo "Could not find Ansible command module at $MODULE_PATH"' >> /fix_ansible.sh && \
+    echo 'fi' >> /fix_ansible.sh && \
+    chmod +x /fix_ansible.sh
+
+# Run the script to patch Ansible
+RUN /fix_ansible.sh
+
+# Now run Ansible with everything disabled
+ENV ANSIBLE_BECOME=False
+ENV ANSIBLE_BECOME_METHOD=su
+ENV ANSIBLE_BECOME_ASK_PASS=False
 
 # Run Ansible to install dependencies
 RUN cd /home/builder/ansible && \
-    ansible-playbook -i config/hosts
-# Run Ansible to install dependencies
-RUN cd /home/builder/ansible && \
-    ansible-playbook -i config/hosts {{PRODUCT_LC}}/{{PRODUCT_LC}}_{{VERSION}}_setup.yml -e "fipsmode=${FIPS_MODE}"
+    ansible-playbook -vvv -i config/hosts {{PRODUCT_LC}}/{{PRODUCT_LC}}_{{VERSION}}_setup.yml -e "fipsmode=${FIPS_MODE}"
+
 
 # Set up environment for building
 ENV PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:${PATH}" \

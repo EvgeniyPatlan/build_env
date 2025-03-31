@@ -39,11 +39,102 @@
       debug:
         msg: "Building environment for PSMDB-60 on {{ os_type }} {{ os_name }} ({{ arch }})"
 
-    # Include common tasks
-    - name: Include common setup tasks
-      include_tasks: ../common/common_setup.yml
+    # Include common tasks - Commenting out as we'll split this into separate steps
+    # - name: Include common setup tasks
+    #  include_tasks: ../common/common_setup.yml
 
-    # === RedHat specific tasks ===
+    # === REPOSITORY SETUP SECTION ===
+    
+    # === RedHat specific repository setup ===
+    - name: Setup RedHat repositories
+      when: os_type == "rpm"
+      block:
+        # RHEL 7 specific repository setup
+        - name: Setup RHEL 7 repositories
+          when: rhel_version == "7"
+          block:
+            - name: Fix CentOS 7 mirrors
+              shell: |
+                sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+                sed -i 's|#\s*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+              ignore_errors: yes
+              
+            - name: Install EPEL repository
+              yum:
+                name: epel-release
+                state: present
+
+            - name: Install SCL repository
+              yum:
+                name: centos-release-scl
+                state: present
+
+            - name: Enable SCL testing repository
+              command: yum-config-manager --enable centos-sclo-rh-testing
+              ignore_errors: yes
+
+        # RHEL 8 specific repository setup
+        - name: Setup RHEL 8 repositories
+          when: rhel_version == "8"
+          block:
+            - name: Enable CodeReady Builder repository
+              command: yum-config-manager --enable ol8_codeready_builder
+              ignore_errors: yes
+              
+            - name: Install EPEL repository
+              yum:
+                name: epel-release
+                state: present
+
+        # RHEL 9/2023 specific repository setup
+        - name: Setup RHEL 9/2023 repositories
+          when: rhel_version == "9" or rhel_version == "2023"
+          block:
+            - name: Enable CodeReady Builder repository
+              shell: |
+                {% if rhel_version == "9" %}
+                dnf config-manager --enable ol9_codeready_builder
+                {% else %}
+                dnf config-manager --enable ol9_codeready_builder
+                {% endif %}
+              ignore_errors: yes
+
+            - name: Install EPEL repository
+              yum:
+                name: "{% if rhel_version == '9' %}oracle-epel-release-el9{% else %}epel-release{% endif %}"
+                state: present
+    
+    # === Debian specific repository setup ===
+    - name: Setup Debian/Ubuntu repositories
+      when: os_type == "deb"
+      block:
+        - name: Add Python PPA repository for older Ubuntu versions
+          when: os_name == "bionic" or os_name == "focal"
+          apt_repository:
+            repo: ppa:deadsnakes/ppa
+            state: present
+            
+        - name: Add Python repository for Debian Buster
+          when: os_name == "buster"
+          block:
+            - name: Download Python repository key
+              get_url:
+                url: https://people.debian.org/~paravoid/python-all/unofficial-python-all.asc
+                dest: /etc/apt/trusted.gpg.d/unofficial-python-all.asc
+                
+            - name: Add Python repository
+              lineinfile:
+                path: /etc/apt/sources.list.d/python-all.list
+                line: "deb http://people.debian.org/~paravoid/python-all {{ os_name }} main"
+                create: yes
+                
+            - name: Update apt cache
+              apt:
+                update_cache: yes
+
+    # === PACKAGE INSTALLATION SECTION ===
+    
+    # === RedHat specific package installation ===
     - name: Install RHEL dependencies
       when: os_type == "rpm"
       block:
@@ -67,30 +158,10 @@
               - xz-devel
             state: present
 
-        # RHEL 7 specific tasks for PSMDB 6.0
-        - name: RHEL 7 tasks for PSMDB 6.0
+        # RHEL 7 specific package installation
+        - name: RHEL 7 package installation
           when: rhel_version == "7"
           block:
-            - name: Fix CentOS 7 mirrors
-              shell: |
-                sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
-                sed -i 's|#\s*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
-              ignore_errors: yes
-              
-            - name: Install EPEL repository
-              yum:
-                name: epel-release
-                state: present
-
-            - name: Install SCL repository
-              yum:
-                name: centos-release-scl
-                state: present
-
-            - name: Enable SCL testing repository
-              command: yum-config-manager --enable centos-sclo-rh-testing
-              ignore_errors: yes
-
             - name: Install additional packages
               yum:
                 name:
@@ -124,19 +195,10 @@
               become: yes
               become_user: "{{ custom_user }}"
 
-        # RHEL 8 specific tasks for PSMDB 6.0
-        - name: RHEL 8 tasks for PSMDB 6.0
+        # RHEL 8 specific package installation
+        - name: RHEL 8 package installation
           when: rhel_version == "8"
           block:
-            - name: Enable CodeReady Builder repository
-              command: yum-config-manager --enable ol8_codeready_builder
-              ignore_errors: yes
-              
-            - name: Install EPEL repository
-              yum:
-                name: epel-release
-                state: present
-                
             - name: Install additional packages
               yum:
                 name:
@@ -164,24 +226,10 @@
               become: yes
               become_user: "{{ custom_user }}"
 
-        # RHEL 9 specific tasks for PSMDB 6.0
-        - name: RHEL 9/2023 tasks for PSMDB 6.0
+        # RHEL 9/2023 specific package installation
+        - name: RHEL 9/2023 package installation
           when: rhel_version == "9" or rhel_version == "2023"
           block:
-            - name: Enable CodeReady Builder repository
-              shell: |
-                {% if rhel_version == "9" %}
-                dnf config-manager --enable ol9_codeready_builder
-                {% else %}
-                dnf config-manager --enable ol9_codeready_builder
-                {% endif %}
-              ignore_errors: yes
-
-            - name: Install EPEL repository
-              yum:
-                name: "{% if rhel_version == '9' %}oracle-epel-release-el9{% else %}epel-release{% endif %}"
-                state: present
-
             - name: Install Python packages
               yum:
                 name:
@@ -208,7 +256,7 @@
                 executable: /bin/bash
               ignore_errors: yes
 
-    # === Debian specific tasks ===
+    # === Debian specific package installation ===
     - name: Install Debian/Ubuntu dependencies
       when: os_type == "deb"
       block:
@@ -236,30 +284,6 @@
               - patchelf
               - libexpat1-dev
             state: present
-
-        - name: Add Python PPA repository for older Ubuntu versions
-          when: os_name == "bionic" or os_name == "focal"
-          apt_repository:
-            repo: ppa:deadsnakes/ppa
-            state: present
-            
-        - name: Add Python repository for Debian Buster
-          when: os_name == "buster"
-          block:
-            - name: Download Python repository key
-              get_url:
-                url: https://people.debian.org/~paravoid/python-all/unofficial-python-all.asc
-                dest: /etc/apt/trusted.gpg.d/unofficial-python-all.asc
-                
-            - name: Add Python repository
-              lineinfile:
-                path: /etc/apt/sources.list.d/python-all.list
-                line: "deb http://people.debian.org/~paravoid/python-all {{ os_name }} main"
-                create: yes
-                
-            - name: Update apt cache
-              apt:
-                update_cache: yes
         
         - name: Install Python packages based on Debian version
           apt:
@@ -349,194 +373,45 @@
             state: present
 
     # === Common tasks for all OS types ===
-    - name: Download curl source
-      get_url:
-        url: https://curl.se/download/curl-7.77.0.tar.gz
-        dest: /tmp/curl-7.77.0.tar.gz
+    - name: Install common components
+      block:
+        - name: Download curl source
+          get_url:
+            url: https://curl.se/download/curl-7.77.0.tar.gz
+            dest: /tmp/curl-7.77.0.tar.gz
 
-    - name: Extract curl source
-      unarchive:
-        src: /tmp/curl-7.77.0.tar.gz
-        dest: /tmp
-        remote_src: yes
-        
-    - name: Build and install curl from source
-      shell: |
-        cd /tmp/curl-7.77.0
-        ./configure --with-openssl
-        make -j$(nproc)
-        make install
-      args:
-        creates: /usr/local/bin/curl
+        - name: Extract curl source
+          unarchive:
+            src: /tmp/curl-7.77.0.tar.gz
+            dest: /tmp
+            remote_src: yes
+            
+        - name: Build and install curl from source
+          shell: |
+            cd /tmp/curl-7.77.0
+            ./configure --with-openssl
+            make -j$(nproc)
+            make install
+          args:
+            creates: /usr/local/bin/curl
 
-    # === Install Go for all versions ===
-    - name: Install Go
-      include_tasks: ../common/install_golang.yml
-      vars:
-        golang_version: "{{ go_version }}"
-        
-    # === MongoDB Toolchain installation ===
-    - name: Install MongoDB Toolchain
-      include_tasks: ../common/install_mongodb_toolchain.yml
-      
-    # === AWS SDK Build ===
-    - name: Build and install AWS SDK
-      include_tasks: ../common/build_aws_sdk.yml
-      
-    # === Set environment variables ===
-    - name: Set MongoDB environment variables
-      lineinfile:
-        path: /home/{{ custom_user }}/.bashrc
-        line: "{{ item }}"
-        create: yes
-      with_items:
-        - 'export PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:$PATH"'
-        - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
-        - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 -B/opt/mongodbtoolchain/v4/bin"'
-EOF
-
-# Create PSMDB 7.0 playbook
-cat > ansible/psmdb/psmdb_70_setup.yml << 'EOF'
----
-# Ansible playbook to install dependencies for Percona Server MongoDB 7.0
-
-- name: Install Percona Server MongoDB 7.0 Build Dependencies
-  hosts: "{{ target_host | default('localhost') }}"
-  become: yes
-  vars:
-    go_version: "1.22.4"
-    mongodb_toolchain_url: "https://downloads.percona.com/downloads/TESTING/issue-CUSTO83"
-    fipsmode: "{{ fipsmode | default('0') }}"
-    custom_user: "{{ lookup('env', 'USER') | default('root') }}"
-
-  tasks:
-    - name: Gather OS facts
-      setup:
-        gather_subset: 
-          - '!all'
-          - '!min'
-          - 'distribution'
-          - 'hardware'
+        # === Install Go for all versions ===
+        - name: Install Go
+          include_tasks: ../common/install_golang.yml
+          vars:
+            golang_version: "{{ go_version }}"
+            
+        # === AWS SDK Build ===
+        #- name: Build and install AWS SDK
+        #  include_tasks: ../common/build_aws_sdk.yml
           
-    - name: Set Debian/Ubuntu variables
-      when: ansible_os_family == "Debian"
-      set_fact:
-        os_type: "deb"
-        os_name: "{{ ansible_distribution_release }}"
-        arch: "{{ ansible_architecture }}"
-        
-    - name: Set RedHat/CentOS variables
-      when: ansible_os_family == "RedHat"
-      set_fact:
-        os_type: "rpm"
-        os_name: "el{{ ansible_distribution_major_version }}"
-        rhel_version: "{{ ansible_distribution_major_version }}"
-        arch: "{{ 'i386' if ansible_architecture == 'i686' else ansible_architecture }}"
-
-    # Display configuration information
-    - name: Display build configuration
-      debug:
-        msg: "Building environment for PSMDB-70 on {{ os_type }} {{ os_name }} ({{ arch }})"
-
-    # Include common tasks
-    - name: Include common setup tasks
-      include_tasks: ../common/common_setup.yml
-
-    # === RedHat specific tasks ===
-    - name: Install RHEL dependencies
-      when: os_type == "rpm"
-      block:
-        # Add PSMDB 7.0 specific dependencies for RedHat
-        - name: Install common MongoDB packages
-          yum:
-            name:
-              - libpcap-devel
-              - openssl-devel
-              - cyrus-sasl-devel
-              - cyrus-sasl-plain
-              - snappy-devel
-              - zlib-devel
-              - bzip2-devel
-              - scons
-              - libcurl-devel
-              - e2fsprogs-devel
-              - expat-devel
-              - lz4-devel
-              - openldap-devel
-              - krb5-devel
-              - xz-devel
-              - which
-            state: present
-
-        # Include other RHEL version specific tasks here
-
-    # === Debian specific tasks ===
-    - name: Install Debian dependencies
-      when: os_type == "deb"
-      block:
-        # Add PSMDB 7.0 specific dependencies for Debian
-        - name: Install common MongoDB packages for Debian
-          apt:
-            name:
-              - libpcap-dev
-              - libssl-dev
-              - libsasl2-dev
-              - libsnappy-dev
-              - zlib1g-dev
-              - libbz2-dev
-              - scons
-              - libcurl4-openssl-dev
-              - libldap2-dev
-              - libkrb5-dev
-              - liblzma-dev
-              - libexpat1-dev
-              - patchelf
-            state: present
-
-        # Include other Debian version specific tasks here
-
-    # === Common tasks for all OS types ===
-    - name: Download curl source
-      get_url:
-        url: https://curl.se/download/curl-7.77.0.tar.gz
-        dest: /tmp/curl-7.77.0.tar.gz
-
-    - name: Extract curl source
-      unarchive:
-        src: /tmp/curl-7.77.0.tar.gz
-        dest: /tmp
-        remote_src: yes
-        
-    - name: Build and install curl from source
-      shell: |
-        cd /tmp/curl-7.77.0
-        ./configure --with-openssl
-        make -j$(nproc)
-        make install
-      args:
-        creates: /usr/local/bin/curl
-
-    # === Install Go for all versions ===
-    - name: Install Go
-      include_tasks: ../common/install_golang.yml
-      vars:
-        golang_version: "{{ go_version }}"
-        
-    # === MongoDB Toolchain installation ===
-    - name: Install MongoDB Toolchain
-      include_tasks: ../common/install_mongodb_toolchain.yml
-      
-    # === AWS SDK Build ===
-    - name: Build and install AWS SDK
-      include_tasks: ../common/build_aws_sdk.yml
-      
-    # === Set environment variables ===
-    - name: Set MongoDB environment variables
-      lineinfile:
-        path: /home/{{ custom_user }}/.bashrc
-        line: "{{ item }}"
-        create: yes
-      with_items:
-        - 'export PATH="/usr/local/go/bin:/opt/mongodbtoolchain/v4/bin:$PATH"'
-        - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
-        - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 -B/opt/mongodbtoolchain/v4/bin"'
+        # === Set environment variables ===
+        - name: Set MongoDB environment variables
+          lineinfile:
+            path: /home/{{ custom_user }}/.bashrc
+            line: "{{ item }}"
+            create: yes
+          with_items:
+            - 'export PATH="/usr/local/go/bin:$PATH"'
+            - 'export LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH"'
+            - 'export OPT_LINKFLAGS="-Wl,--build-id=sha1 "'

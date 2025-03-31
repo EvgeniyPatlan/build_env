@@ -1,0 +1,21 @@
+---
+# Install MongoDB Toolchain
+
+- name: Download MongoDB Toolchain installer
+  get_url:
+    url: https://downloads.percona.com/downloads/TESTING/issue-CUSTO83/toolchain_installer.tar.gz
+    dest: /tmp/toolchain_installer.tar.gz
+    
+- name: Extract toolchain installer
+  unarchive:
+    src: /tmp/toolchain_installer.tar.gz
+    dest: /tmp
+    remote_src: yes
+    
+- name: Install MongoDB Toolchain
+  shell: |
+    cd /tmp
+    export USER={{ custom_user }}
+    bash -x ./installer.sh -k --download-url {{ mongodb_toolchain_url }}/{{ os_name }}_mongodbtoolchain_{{ arch }}.tar.gz
+  args:
+    creates: /opt/mongodbtoolchain/v4/bin/gcc

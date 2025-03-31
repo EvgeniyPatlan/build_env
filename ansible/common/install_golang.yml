@@ -1,0 +1,45 @@
+---
+# Install Go for Percona build environments
+
+- name: Set Go architecture variable
+  set_fact:
+    go_arch: "{{ 'amd64' if arch == 'x86_64' else 'arm64' if arch == 'aarch64' else 'amd64' }}"
+    
+- name: Download Go {{ golang_version }}
+  get_url:
+    url: "https://downloads.percona.com/downloads/packaging/go/go{{ golang_version }}.linux-{{ go_arch }}.tar.gz"
+    dest: "/tmp/golang{{ golang_version }}.tar.gz"
+    
+- name: Remove existing Go installations
+  file:
+    path: "{{ item }}"
+    state: absent
+  with_items:
+    - /usr/local/go1.22
+    - /usr/local/go1.19
+    - /usr/local/go1.11
+    - /usr/local/go1.8
+    - /usr/local/go1.9
+    - /usr/local/go1.9.2
+    - /usr/local/go
+    
+- name: Extract Go
+  shell: tar --transform=s,go,go{{ golang_version }}, -zxf /tmp/golang{{ golang_version }}.tar.gz -C /usr/local
+  args:
+    creates: "/usr/local/go{{ golang_version }}"
+    
+- name: Create Go symlink
+  file:
+    src: "/usr/local/go{{ golang_version }}"
+    dest: /usr/local/go
+    state: link
+
+- name: Set Go environment variables
+  lineinfile:
+    path: /home/{{ custom_user }}/.bashrc
+    line: "{{ item }}"
+    create: yes
+  with_items:
+    - 'export GOROOT="/usr/local/go"'
+    - 'export GOPATH="/home/{{ custom_user }}/go"'
+    - 'export PATH="/usr/local/go/bin:$PATH:$GOPATH"'

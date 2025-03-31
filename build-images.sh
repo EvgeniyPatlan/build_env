@@ -45,9 +45,9 @@ OS_NAMES=(
 
 declare -A INSTALL_BASIC_DEPS
 INSTALL_BASIC_DEPS=(
-    ["ol8"]="RUN dnf -y update && \\
-    dnf -y install epel-release && \\
-    dnf -y install ansible python3 sudo python3-pip curl which git && \\
+    ["ol8"]="RUN dnf -y update  && \\
+    dnf -y install epel-release  && \\
+    dnf -y install sudo ansible python3 sudo python3-pip curl which git && \\
     dnf clean all"
     
     ["ol9"]="RUN dnf -y update && \\
@@ -58,6 +58,7 @@ INSTALL_BASIC_DEPS=(
     
     ["ubuntu2004"]="RUN apt-get update && \\
     apt-get install -y \\
+        sudo \\
         python3 \\
         python3-pip \\
         sudo \\
@@ -73,6 +74,7 @@ INSTALL_BASIC_DEPS=(
     
     ["ubuntu2204"]="RUN apt-get update && \\
     apt-get install -y \\
+        sudo \\
         python3 \\
         python3-pip \\
         sudo \\
@@ -88,6 +90,7 @@ INSTALL_BASIC_DEPS=(
     
     ["ubuntu2404"]="RUN apt-get update && \\
     apt-get install -y \\
+        sudo \\
         python3 \\
         python3-pip \\
         sudo \\
@@ -103,6 +106,7 @@ INSTALL_BASIC_DEPS=(
     
     ["debian11"]="RUN apt-get update && \\
     apt-get install -y \\
+        sudo \\
         python3 \\
         python3-pip \\
         sudo \\
@@ -120,6 +124,7 @@ INSTALL_BASIC_DEPS=(
     
     ["debian12"]="RUN apt-get update && \\
     apt-get install -y \\
+        sudo \\
         python3 \\
         python3-pip \\
         sudo \\
@@ -361,14 +366,35 @@ for platform in "${PLATFORMS[@]}"; do
     platform_dockerfile="$BUILD_DIR/Dockerfile.${product_tag}-${platform}"
     
     # Replace placeholders in template
-    cp "$TEMPLATE_FILE" "$platform_dockerfile"
-    sed -i "s|{{BASE_IMAGE}}|${BASE_IMAGES[$platform]}|g" "$platform_dockerfile"
-    sed -i "s|{{OS_NAME}}|${OS_NAMES[$platform]}|g" "$platform_dockerfile"
-    sed -i "s|{{INSTALL_BASIC_DEPS}}|${INSTALL_BASIC_DEPS[$platform]}|g" "$platform_dockerfile"
-    sed -i "s|{{PRODUCT}}|${PRODUCT}|g" "$platform_dockerfile"
-    sed -i "s|{{VERSION}}|${VERSION}|g" "$platform_dockerfile"
-    sed -i "s|{{PRODUCT_LC}}|${PRODUCT_LC}|g" "$platform_dockerfile"
-    
+#    cp "$TEMPLATE_FILE" "$platform_dockerfile"
+#    sed -i "s|{{BASE_IMAGE}}|${BASE_IMAGES[$platform]}|g" "$platform_dockerfile"
+#    sed -i "s|{{OS_NAME}}|${OS_NAMES[$platform]}|g" "$platform_dockerfile"
+#    sed -i "s|{{INSTALL_BASIC_DEPS}}|${INSTALL_BASIC_DEPS[$platform]}|g" "$platform_dockerfile"
+#    sed -i "s|{{PRODUCT}}|${PRODUCT}|g" "$platform_dockerfile"
+#    sed -i "s|{{VERSION}}|${VERSION}|g" "$platform_dockerfile"
+#    sed -i "s|{{PRODUCT_LC}}|${PRODUCT_LC}|g" "$platform_dockerfile"
+
+# Replace the placeholder replacement section with this:
+# Create platform-specific Dockerfile from template
+platform_dockerfile="$BUILD_DIR/Dockerfile.${product_tag}-${platform}"
+
+# First replace the multi-line INSTALL_BASIC_DEPS with a temporary file
+echo "${INSTALL_BASIC_DEPS[$platform]}" > "$BUILD_DIR/deps_replacement.txt"
+
+# Copy the template and do single-line replacements
+cp "$TEMPLATE_FILE" "$platform_dockerfile"
+sed -i "s|{{BASE_IMAGE}}|${BASE_IMAGES[$platform]}|g" "$platform_dockerfile"
+sed -i "s|{{OS_NAME}}|${OS_NAMES[$platform]}|g" "$platform_dockerfile"
+sed -i "s|{{PRODUCT}}|${PRODUCT}|g" "$platform_dockerfile"
+sed -i "s|{{VERSION}}|${VERSION}|g" "$platform_dockerfile"
+sed -i "s|{{PRODUCT_LC}}|${PRODUCT_LC}|g" "$platform_dockerfile"
+
+sed -i "/{{INSTALL_BASIC_DEPS}}/r $BUILD_DIR/deps_replacement.txt" "$platform_dockerfile"
+sed -i 's:{{INSTALL_BASIC_DEPS}}::' "$platform_dockerfile"
+cp $platform_dockerfile ~/
+# Clean up
+rm -f "$BUILD_DIR/deps_replacement.txt"
+
     # Build command options
     build_args=()
     build_args+=(--build-arg "FIPS_MODE=$FIPS_MODE")
@@ -421,9 +447,9 @@ for platform in "${PLATFORMS[@]}"; do
     fi
     
     # Cleanup
-    if [ "$KEEP_DOCKERFILE" -eq 0 ]; then
-        rm -f "$platform_dockerfile"
-    fi
+#    if [ "$KEEP_DOCKERFILE" -eq 0 ]; then
+#        rm -f "$platform_dockerfile"
+#    fi
     
     echo ""
 done
@@ -440,124 +466,3 @@ if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
 fi
 
 echo "All Docker images for $PRODUCT-$VERSION built successfully!"
-EOF
-
-# Create run-local-setup.sh script
-cat > run-local-setup.sh << 'EOF'
-#!/usr/bin/env bash
-
-# Script to run Ansible locally to set up Percona product build dependencies
-
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Default values
-FIPS_MODE=0
-VERBOSITY=""
-PRODUCT=""
-VERSION=""
-
-# Check if Ansible is installed
-if ! command -v ansible-playbook &> /dev/null; then
-    echo "Ansible is not installed. Installing..."
-    if command -v apt-get &> /dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y ansible
-    elif command -v yum &> /dev/null; then
-        sudo yum install -y epel-release
-        sudo yum install -y ansible
-    elif command -v dnf &> /dev/null; then
-        sudo dnf install -y ansible
-    else
-        echo "Could not install Ansible. Please install it manually."
-        exit 1
-    fi
-fi
-
-function usage() {
-    echo "Usage: $0 --product PRODUCT --version VERSION [OPTIONS]"
-    echo "Set up local environment for building Percona products"
-    echo ""
-    echo "Required options:"
-    echo "  --product PRODUCT     Product to set up (PSMDB, PS, PXB, PXC)"
-    echo "  --version VERSION     Product version (e.g., 60, 70, 80, 84, 9X)"
-    echo ""
-    echo "Other options:"
-    echo "  --fips                Enable FIPS mode"
-    echo "  -v, --verbose         Increase verbosity level"
-    echo "  -h, --help            Show this help message"
-    echo ""
-    echo "Supported product versions:"
-    echo "  PSMDB: 60, 70, 80"
-    echo "  PS: 80, 84, 9X"
-    echo "  PXB: 80, 84, 90"
-    echo "  PXC: 80, 84, 9X"
-    echo ""
-    echo "Example: $0 --product PSMDB --version 70"
-    exit 1
-}
-
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --product)
-            PRODUCT="$2"
-            shift 2
-            ;;
-        --version)
-            VERSION="$2"
-            shift 2
-            ;;
-        --fips)
-            FIPS_MODE=1
-            shift
-            ;;
-        -v|--verbose)
-            VERBOSITY="-v"
-            shift
-            ;;
-        -vv)
-            VERBOSITY="-vv"
-            shift
-            ;;
-        -vvv)
-            VERBOSITY="-vvv"
-            shift
-            ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            echo "Unknown option: $1"
-            usage
-            ;;
-    esac
-done
-
-# Validate required arguments
-if [ -z "$PRODUCT" ] || [ -z "$VERSION" ]; then
-    echo "Error: Product and version must be specified."
-    usage
-fi
-
-# Convert product to lowercase for directory matching
-PRODUCT_LC=$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]')
-
-# Find the appropriate playbook
-PLAYBOOK="$SCRIPT_DIR/ansible/$PRODUCT_LC/${PRODUCT_LC}_${VERSION}_setup.yml"
-
-if [ ! -f "$PLAYBOOK" ]; then
-    echo "Error: No playbook found for $PRODUCT version $VERSION"
-    echo "Expected playbook path: $PLAYBOOK"
-    exit 1
-fi
-
-echo "Setting up build environment for $PRODUCT-$VERSION"
-echo "FIPS mode: $FIPS_MODE"
-echo "Using playbook: $PLAYBOOK"
-
-# Run the Ansible playbook
-ansible-playbook -i "$SCRIPT_DIR/ansible/config/hosts" "$PLAYBOOK" -e "fipsmode=$FIPS_MODE" $VERBOSITY
-
-echo "Setup completed successfully!"

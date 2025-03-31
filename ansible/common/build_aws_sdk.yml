@@ -1,0 +1,49 @@
+---
+# Build AWS SDK for Percona products
+
+- name: Clone AWS SDK
+  git:
+    repo: https://github.com/aws/aws-sdk-cpp.git
+    dest: /tmp/aws-sdk-cpp
+    version: 1.9.379
+    
+- name: Initialize AWS SDK submodules
+  command: git submodule update --init --recursive
+  args:
+    chdir: /tmp/aws-sdk-cpp
+    
+- name: Patch AWS SDK for RHEL
+  when: os_type == "rpm" and rhel_version in ["7", "8", "9", "2023"]
+  shell: |
+    sed -i 's:v0.4.42:v0.6.10:' third-party/CMakeLists.txt
+    sed -i 's:"-Werror" ::' cmake/compiler_settings.cmake
+  args:
+    chdir: /tmp/aws-sdk-cpp
+    
+- name: Create AWS SDK build directory
+  file:
+    path: /tmp/aws-sdk-cpp/build
+    state: directory
+    
+- name: Set up environment variables for AWS SDK build
+  lineinfile:
+    path: /tmp/aws-sdk-build-env.sh
+    create: yes
+    line: |
+      export CC={{ compiler_cc | default('/opt/mongodbtoolchain/v4/bin/gcc') }}
+      export CXX={{ compiler_cxx | default('/opt/mongodbtoolchain/v4/bin/g++') }}
+      {% if os_name == 'jammy' or os_name == 'noble' %}
+      export CMAKE_CXX_FLAGS=" -Wno-error=maybe-uninitialized -Wno-error=deprecated-declarations -Wno-error=uninitialized "
+      export CMAKE_C_FLAGS=" -Wno-error=maybe-uninitialized -Wno-error=maybe-uninitialized -Wno-error=uninitialized "
+      {% endif %}
+    mode: 0755
+
+- name: Build AWS SDK
+  shell: |
+    cd /tmp/aws-sdk-cpp/build
+    source /tmp/aws-sdk-build-env.sh
+    {{ 'cmake3' if os_type == 'rpm' and rhel_version == '7' else 'cmake' }} .. -DCMAKE_BUILD_TYPE=Release -DBUILD_ONLY="s3;transfer" -DBUILD_SHARED_LIBS=OFF -DMINIMIZE_SIZE=ON -DAUTORUN_UNIT_TESTS=OFF
+    make -j$(nproc)
+    make install
+  args:
+    creates: /usr/local/lib/libaws-cpp-sdk-s3.a
